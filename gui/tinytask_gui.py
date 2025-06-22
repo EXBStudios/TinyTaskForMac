@@ -5,6 +5,17 @@ import threading
 import pyautogui
 import tkinter as tk
 from tkinter import filedialog, messagebox
+import requests # <-- New import!
+import os       # <-- New import!
+import zipfile  # <-- New import!
+import shutil   # <-- New import!
+
+# --- Versioning for Updater ---
+CURRENT_VERSION = "v1.0.0"
+
+GITHUB_REPO_OWNER = "EXBStudios"
+GITHUB_REPO_NAME = "TinyTaskForMac"
+GITHUB_RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/releases/latest"
 
 # --- Global Variables ---
 recorded_events = []
@@ -12,7 +23,7 @@ is_recording = False
 recording_start_time = 0
 is_playing = False
 
-# Tkinter GUI elements (will be initialized in create_gui)
+# Tkinter GUI elements
 status_label = None
 record_button = None
 stop_record_button = None
@@ -20,11 +31,11 @@ play_button = None
 stop_play_button = None
 save_button = None
 load_button = None
+update_button = None # <-- New button
 
-# --- Event Handlers (from Step 1 & 2, unchanged logic) ---
+# --- Event Handlers (from previous steps, unchanged logic) ---
 
 def on_mouse_click(x, y, button, pressed):
-    """Callback for mouse click events."""
     global recorded_events, is_recording, recording_start_time
     if is_recording:
         event_type = "mouse_click"
@@ -37,10 +48,8 @@ def on_mouse_click(x, y, button, pressed):
             "pressed": pressed,
             "time": timestamp
         })
-        # print(f"[REC] Click: ({x}, {y}) {button} {'Pressed' if pressed else 'Released'} @ {timestamp:.3f}s") # Suppress console prints for GUI
 
 def on_mouse_move(x, y):
-    """Callback for mouse movement events."""
     global recorded_events, is_recording, recording_start_time
     if is_recording:
         event_type = "mouse_move"
@@ -57,7 +66,6 @@ def on_mouse_move(x, y):
             })
 
 def on_mouse_scroll(x, y, dx, dy):
-    """Callback for mouse scroll events."""
     global recorded_events, is_recording, recording_start_time
     if is_recording:
         event_type = "mouse_scroll"
@@ -70,10 +78,8 @@ def on_mouse_scroll(x, y, dx, dy):
             "dy": dy,
             "time": timestamp
         })
-        # print(f"[REC] Scroll: ({x}, {y}) dx={dx}, dy={dy} @ {timestamp:.3f}s")
 
 def on_key_press(key):
-    """Callback for keyboard key press events."""
     global recorded_events, is_recording, recording_start_time
     if is_recording:
         event_type = "key_press"
@@ -87,10 +93,8 @@ def on_key_press(key):
             "key": char,
             "time": timestamp
         })
-        # print(f"[REC] Key Press: {char} @ {timestamp:.3f}s")
 
 def on_key_release(key):
-    """Callback for keyboard key release events."""
     global recorded_events, is_recording, recording_start_time
     if is_recording:
         event_type = "key_release"
@@ -104,11 +108,8 @@ def on_key_release(key):
             "key": char,
             "time": timestamp
         })
-        # print(f"[REC] Key Release: {char} @ {timestamp:.3f}s")
 
-        # No ESC hotkey for stopping recording here; we'll use GUI button
-
-# --- Listener Management (Adapted for GUI) ---
+# --- Listener Management (from previous steps, unchanged logic) ---
 
 mouse_listener = None
 keyboard_listener = None
@@ -120,11 +121,12 @@ def update_status(message):
 
 def enable_buttons():
     record_button.config(state=tk.NORMAL)
-    stop_record_button.config(state=tk.DISABLED) # Stop Record is disabled when not recording
+    stop_record_button.config(state=tk.DISABLED)
     play_button.config(state=tk.NORMAL)
-    stop_play_button.config(state=tk.DISABLED) # Stop Play is disabled when not playing
+    stop_play_button.config(state=tk.DISABLED)
     save_button.config(state=tk.NORMAL)
     load_button.config(state=tk.NORMAL)
+    update_button.config(state=tk.NORMAL) # Enable update button
 
 def disable_for_recording():
     record_button.config(state=tk.DISABLED)
@@ -133,6 +135,7 @@ def disable_for_recording():
     stop_play_button.config(state=tk.DISABLED)
     save_button.config(state=tk.DISABLED)
     load_button.config(state=tk.DISABLED)
+    update_button.config(state=tk.DISABLED) # Disable update during recording/playback
 
 def disable_for_playback():
     record_button.config(state=tk.DISABLED)
@@ -141,10 +144,9 @@ def disable_for_playback():
     stop_play_button.config(state=tk.NORMAL)
     save_button.config(state=tk.DISABLED)
     load_button.config(state=tk.DISABLED)
-
+    update_button.config(state=tk.DISABLED) # Disable update during recording/playback
 
 def start_recording():
-    """Starts listening for mouse and keyboard events via GUI button."""
     global is_recording, recorded_events, recording_start_time, mouse_listener, keyboard_listener
 
     if is_recording:
@@ -154,13 +156,12 @@ def start_recording():
         update_status("Cannot start recording while playback is active. Stop playback first.")
         return
 
-    recorded_events = [] # Clear previous recordings
+    recorded_events = []
     is_recording = True
     recording_start_time = time.time()
     update_status("Recording... Perform actions, then click 'Stop Recording'.")
     disable_for_recording()
 
-    # Start listeners in separate threads to not block the GUI
     mouse_listener = mouse.Listener(
         on_click=on_mouse_click,
         on_move=on_mouse_move,
@@ -174,7 +175,6 @@ def start_recording():
     keyboard_listener.start()
 
 def stop_recording():
-    """Stops listening for mouse and keyboard events via GUI button."""
     global is_recording, mouse_listener, keyboard_listener
 
     if not is_recording:
@@ -183,7 +183,7 @@ def stop_recording():
 
     is_recording = False
     update_status("Stopped recording.")
-    enable_buttons() # Re-enable appropriate buttons
+    enable_buttons()
 
     if mouse_listener and mouse_listener.is_alive():
         mouse_listener.stop()
@@ -192,11 +192,9 @@ def stop_recording():
         keyboard_listener.stop()
         keyboard_listener.join()
     
-    # After stopping, automatically prompt to save (or save to default)
     save_recorded_events_gui()
 
 def save_recorded_events_gui():
-    """Saves the recorded events to a JSON file via GUI."""
     if not recorded_events:
         messagebox.showinfo("Info", "No macro recorded to save.")
         return
@@ -217,7 +215,6 @@ def save_recorded_events_gui():
         update_status("Save operation cancelled.")
 
 def load_recorded_events_gui():
-    """Loads recorded events from a JSON file via GUI."""
     global recorded_events
 
     filepath = filedialog.askopenfilename(defaultextension=".json",
@@ -244,10 +241,9 @@ def load_recorded_events_gui():
     else:
         update_status("Load operation cancelled.")
 
-# --- Playback Functionality (Adapted for GUI) ---
+# --- Playback Functionality (from previous steps, unchanged logic) ---
 
 def play_recorded_macro():
-    """Plays back the currently loaded recorded events via GUI button."""
     global is_playing, recorded_events
 
     if not recorded_events:
@@ -272,12 +268,10 @@ def play_recorded_macro():
     playback_thread.start()
 
 def _execute_playback():
-    """Internal function to handle the actual event execution."""
     global is_playing
 
-    # Set up pyautogui's default pause and failsafe
-    pyautogui.PAUSE = 0.001 # Smallest possible pause between actions
-    pyautogui.FAILSAFE = True # Re-enable failsafe for playback if not disabled specifically
+    pyautogui.PAUSE = 0.001
+    pyautogui.FAILSAFE = True
 
     last_event_time = 0
     try:
@@ -323,58 +317,163 @@ def _execute_playback():
     finally:
         is_playing = False
         update_status("Playback finished.")
-        enable_buttons() # Re-enable appropriate buttons
+        enable_buttons()
 
 def stop_playback():
-    """Sets the flag to stop the currently running playback via GUI button."""
     global is_playing
     if is_playing:
         is_playing = False
         update_status("Playback stop requested.")
-        # The _execute_playback thread will pick up the flag and stop itself
     else:
         update_status("No playback is currently active.")
 
 # --- Hotkey for stopping Playback (F9) ---
-# This listener runs in a background daemon thread to catch the F9 key
 stop_playback_listener = None
 
 def setup_playback_stop_listener():
     global stop_playback_listener
     def on_f9_release(key):
-        # We check both is_playing and the key, and also ensure the main GUI thread is not locked up
         if is_playing and key == keyboard.Key.f9:
-            print("F9 hotkey detected. Requesting playback stop.") # For console debug
-            # Use root.after to safely call stop_playback in the main Tkinter thread
+            print("F9 hotkey detected. Requesting playback stop.")
             if hasattr(setup_playback_stop_listener, 'root_instance'):
                 setup_playback_stop_listener.root_instance.after(0, stop_playback)
-            return False # Stop this specific listener iteration, but the thread keeps running for future F9 presses
-
-    # Create a new listener each time this function is called, or ensure it's managed once
+            return False # Keep the listener active
+    
     if stop_playback_listener is None:
         stop_playback_listener = keyboard.Listener(on_release=on_f9_release)
         stop_playback_listener.start()
-        # No .join() here, as this thread should run indefinitely in the background
-        # It's a daemon thread, so it will exit when the main program exits.
+
+
+# --- NEW: Updater Functionality ---
+
+def check_for_updates():
+    """Checks GitHub for the latest release version."""
+    update_button.config(state=tk.DISABLED) # Disable button during check
+    update_status("Checking for updates...")
+    try:
+        response = requests.get(GITHUB_RELEASES_API_URL, timeout=10)
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        latest_release = response.json()
+        latest_version = latest_release['tag_name']
+        download_url = latest_release['zipball_url'] # URL to download the source code zip
+
+        if latest_version != CURRENT_VERSION:
+            update_status(f"New version {latest_version} available! Current: {CURRENT_VERSION}")
+            if messagebox.askyesno("Update Available",
+                                   f"Version {latest_version} is available. Do you want to download and install it?\n\n"
+                                   "Warning: This will overwrite your current script files. Please save any unsaved macros."):
+                
+                # Run download and install in a separate thread to keep GUI responsive
+                update_thread = threading.Thread(target=download_and_install_update, args=(download_url, latest_version))
+                update_thread.daemon = True
+                update_thread.start()
+            else:
+                update_status("Update cancelled by user.")
+                update_button.config(state=tk.NORMAL)
+        else:
+            update_status(f"You are running the latest version ({CURRENT_VERSION}).")
+            messagebox.showinfo("No Update", f"You are running the latest version ({CURRENT_VERSION}).")
+            update_button.config(state=tk.NORMAL)
+
+    except requests.exceptions.RequestException as e:
+        update_status(f"Error checking for updates: {e}")
+        messagebox.showerror("Update Error", f"Could not check for updates. Error: {e}\n\nPlease check your internet connection and GitHub repository name.")
+        update_button.config(state=tk.NORMAL)
+    except Exception as e:
+        update_status(f"An unexpected error occurred during update check: {e}")
+        messagebox.showerror("Update Error", f"An unexpected error occurred during update check: {e}")
+        update_button.config(state=tk.NORMAL)
+
+def download_and_install_update(download_url, new_version):
+    """Downloads the new version and attempts to replace current files."""
+    try:
+        update_status(f"Downloading update {new_version}...")
+        response = requests.get(download_url, stream=True, timeout=30)
+        response.raise_for_status()
+
+        # Get the directory of the current script
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        temp_zip_path = os.path.join(current_dir, "update.zip")
+        temp_extract_dir = os.path.join(current_dir, "temp_update_extract")
+
+        with open(temp_zip_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        update_status("Extracting update...")
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            # GitHub zipballs contain a top-level directory like repo-name-commit_hash
+            # We need to extract that and then move its contents.
+            # Get the name of the top-level directory
+            top_level_dir = zip_ref.namelist()[0].split('/')[0] # e.g., TinyTaskForMac-hash
+            zip_ref.extractall(temp_extract_dir)
+
+        # Move files from the extracted top-level directory to the current directory
+        extracted_source_path = os.path.join(temp_extract_dir, top_level_dir)
+        
+        update_status("Installing update...")
+        # Iterate over files/dirs in the extracted source and overwrite current ones
+        # Be careful: This will overwrite *all* files from the repo.
+        # If you have other files (like my_macro.json) that shouldn't be overwritten,
+        # you need to explicitly exclude them or handle them.
+        for item in os.listdir(extracted_source_path):
+            s = os.path.join(extracted_source_path, item)
+            d = os.path.join(current_dir, item)
+            
+            # Avoid overwriting the temp zip or the current running script immediately
+            # (though the script will be restarted, so it's less critical for the script itself)
+            if item == os.path.basename(__file__):
+                continue # Skip the main script for now, let's replace it last or restart will fail
+
+            if os.path.isdir(s):
+                if os.path.exists(d):
+                    shutil.rmtree(d) # Remove existing directory to ensure clean copy
+                shutil.copytree(s, d)
+            else:
+                shutil.copy2(s, d) # copy2 preserves metadata
+
+        # Now, replace the main script if it was updated
+        shutil.copy2(os.path.join(extracted_source_path, os.path.basename(__file__)), os.path.join(current_dir, os.path.basename(__file__)))
+
+
+        update_status("Update successful! Please restart the application.")
+        messagebox.showinfo("Update Complete",
+                             f"TinyTask for Mac has been updated to version {new_version}.\n\n"
+                             "Please restart the application to apply the changes.")
+
+    except requests.exceptions.RequestException as e:
+        update_status(f"Error downloading update: {e}")
+        messagebox.showerror("Download Error", f"Failed to download update. Error: {e}")
+    except zipfile.BadZipFile:
+        update_status("Error: Downloaded file is not a valid zip archive.")
+        messagebox.showerror("Update Error", "Downloaded file is corrupted or not a valid zip.")
+    except Exception as e:
+        update_status(f"An error occurred during update installation: {e}")
+        messagebox.showerror("Installation Error", f"An error occurred during installation: {e}")
+    finally:
+        # Clean up temporary files
+        if os.path.exists(temp_zip_path):
+            os.remove(temp_zip_path)
+        if os.path.exists(temp_extract_dir):
+            shutil.rmtree(temp_extract_dir)
+        
+        enable_buttons() # Re-enable buttons, especially update
 
 # --- GUI Setup ---
 def create_gui():
-    global status_label, record_button, stop_record_button, play_button, stop_play_button, save_button, load_button
+    global status_label, record_button, stop_record_button, play_button, stop_play_button, save_button, load_button, update_button
 
     root = tk.Tk()
-    root.title("TinyTask for Mac")
-    root.geometry("300x320") # Adjusted size
-    root.resizable(False, False) # Prevent resizing
+    root.title(f"TinyTask for Mac (v{CURRENT_VERSION})") # Show version in title
+    root.geometry("300x360") # Adjusted size for new button
+    root.resizable(False, False)
 
-    # Make root_instance available for the F9 hotkey handler
     setup_playback_stop_listener.root_instance = root
 
-    # Labels
     status_label = tk.Label(root, text="Status: Idle.", font=("Helvetica", 12), wraplength=280)
     status_label.pack(pady=10)
 
-    # Buttons
-    button_width = 20 # Standardized width for buttons
+    button_width = 20
 
     record_button = tk.Button(root, text="Record", command=start_recording, width=button_width, bg="#4CAF50", fg="white")
     record_button.pack(pady=3)
@@ -394,22 +493,21 @@ def create_gui():
     load_button = tk.Button(root, text="Load Macro", command=load_recorded_events_gui, width=button_width)
     load_button.pack(pady=3)
 
-    # Start the F9 hotkey listener as a daemon thread
-    # It only needs to be started once.
-    if stop_playback_listener is None: # Only start if not already started
+    update_button = tk.Button(root, text="Check for Updates", command=check_for_updates, width=button_width, bg="#607D8B", fg="white") # New button
+    update_button.pack(pady=10) # More padding for this one
+
+    if stop_playback_listener is None:
         hotkey_thread = threading.Thread(target=setup_playback_stop_listener)
         hotkey_thread.daemon = True
         hotkey_thread.start()
-        print("Background F9 stop listener started.") # Console debug
+        print("Background F9 stop listener started.")
 
-    # Handle window closing to ensure listeners are stopped
     def on_closing():
         if is_recording:
-            stop_recording() # This will also save
+            stop_recording()
         if is_playing:
             stop_playback()
-        # Give some time for threads to shut down
-        time.sleep(0.5)
+        time.sleep(0.5) 
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -417,6 +515,13 @@ def create_gui():
     root.mainloop()
 
 if __name__ == "__main__":
-    print("Starting TinyTask GUI for Mac...")
+    # Ensure requests is installed
+    try:
+        import requests
+    except ImportError:
+        print("The 'requests' library is not installed. Please install it: pip install requests")
+        exit()
+
+    print(f"Starting TinyTask GUI for Mac (Version {CURRENT_VERSION})...")
     print("IMPORTANT: Ensure your Python environment or terminal has Accessibility and Input Monitoring permissions in System Settings.")
     create_gui()
