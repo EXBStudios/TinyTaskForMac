@@ -1,4 +1,4 @@
-<img width="1024" height="1024" alt="output-onlinepngtools (2)" src="https://github.com/user-attachments/assets/00688a5a-c3fc-4cc0-b917-332c8fddbf6d" />
+<img width="360" height="360" alt="output-onlinepngtools (2)" src="https://github.com/user-attachments/assets/00688a5a-c3fc-4cc0-b917-332c8fddbf6d" />
 # HELP NEEDED
 Soon, we may need Apple Silicon testers so we can run on more than just Intel Mac's, I'll see! 😅
 # UPDATES
